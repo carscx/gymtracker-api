@@ -1,0 +1,84 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String?
+  googleId      String?
+  name          String?
+  theme         String   @default("system") // Valores: 'light', 'dark', 'system'
+  avatarUrl     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Agrego ya el resto de tu modelo para aprovechar la migración
+  weightLog     WeightLog[]
+  customExercises Exercise[]
+  routines      Routine[]
+  measurements Measurement[]
+}
+
+model Exercise {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  videoUrl    String?
+  isPublic    Boolean  @default(false)
+  isApproved  Boolean  @default(false)
+  creatorId   String?
+  creator     User?    @relation(fields: [creatorId], references: [id])
+  routines    RoutineExercise[]
+}
+
+model Routine {
+  id          String   @id @default(uuid())
+  name        String
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  exercises   RoutineExercise[]
+  history     WorkoutHistory[]
+}
+
+model RoutineExercise {
+  id          String   @id @default(uuid())
+  routineId   String
+  exerciseId  String
+  order       Int
+  sets        Int      @default(3)
+  reps        Int      @default(10)
+  routine     Routine  @relation(fields: [routineId], references: [id])
+  exercise    Exercise @relation(fields: [exerciseId], references: [id])
+}
+
+model WeightLog {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  weight    Float
+  comment   String?
+  date      DateTime @default(now())
+}
+
+model WorkoutHistory {
+  id        String   @id @default(uuid())
+  routineId String
+  routine   Routine  @relation(fields: [routineId], references: [id])
+  date      DateTime @default(now())
+  duration  Int?
+}
+
+model Measurement {
+  id        String   @id @default(uuid())
+  weight    Float    // Peso en kg
+  note     String?  // Opcional: Para que el usuario agregue notas sobre la medición
+  photoUrl  String?  // Opcional: Para que el usuario guarde su "foto de progreso"
+  date      DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

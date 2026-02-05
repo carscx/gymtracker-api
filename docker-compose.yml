@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: gymtracker-db
+    ports:
+      - '5434:5432'
+    environment:
+      # NO definimos POSTGRES_USER (así usa 'postgres' por defecto)
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: gymtracker
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - gym-net
+
+volumes:
+  postgres_data:
+
+networks:
+  gym-net:
