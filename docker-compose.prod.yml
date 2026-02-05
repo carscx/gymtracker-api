@@ -1,43 +1,33 @@
 version: '3.8'
 
 services:
-  # --- LA API (NestJS) ---
   api:
     container_name: gymtracker-api
-    build: .
+    # CAMBIO CLAVE: Ya no usamos 'build: .', usamos la imagen que creará GitHub
+    image: ghcr.io/${{ github.repository_owner }}/gymtracker-api:latest
     restart: always
     ports:
-      # Mapeamos el 3005 del servidor al 3000 del contenedor
-      # Solo accesible desde localhost (para CloudPanel)
       - '127.0.0.1:3005:3000'
     environment:
-      # La API busca a la BD por su nombre de servicio "db", no por IP
       DATABASE_URL: 'postgresql://postgres:${DB_PASSWORD}@db:5432/gymtracker?schema=public'
-      # Ajusta esto si usas JWT u otras variables
       NODE_ENV: 'production'
-      PORT: 3000
     depends_on:
       - db
     networks:
       - gym-net
 
-  # --- LA BASE DE DATOS (Aislada) ---
   db:
     image: postgres:15-alpine
     container_name: gymtracker-db-prod
     restart: always
     environment:
       POSTGRES_USER: postgres
-      # ¡CAMBIA ESTA CONTRASEÑA POR UNA SEGURA!
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: gymtracker
     volumes:
-      # Persistencia de datos en el servidor
       - gymtracker_pg_data:/var/lib/postgresql/data
     networks:
       - gym-net
-    # OJO: NO PONEMOS 'ports'.
-    # Así no choca con tu otra BD en el 5432.
 
 volumes:
   gymtracker_pg_data:

@@ -1,52 +1,104 @@
-name: Deploy to Hetzner VPS
+name: Deploy GymTracker (Docker Image Strategy)
 
 on:
   push:
-    branches:
-      - main # Se ejecuta cada vez que haces push a la rama principal
+    branches: ['main']
+
+env:
+  # Define el nombre de la imagen en el registro de GitHub
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # Necesario para subir la imagen a GitHub Packages
 
     steps:
-      - name: 📥 Bajar el código (Checkout)
+      - name: 📥 Bajar código
         uses: actions/checkout@v4
 
-      - name: 🚚 Copiar archivos al Servidor (SCP)
-        uses: appleboy/scp-action@master
+      - name: 🔐 Login en GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          # Copiamos todo EXCEPTO cosas pesadas o innecesarias
-          source: '.,!node_modules,!dist,!.git,!.github'
-          target: '/home/${{ secrets.SERVER_USER }}/gymtracker-api'
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🚀 Desplegar en el Servidor (SSH)
-        uses: appleboy/ssh-action@master
+      - name: 🐳 Extraer metadatos (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: 🔨 Construir y Subir Imagen (Build & Push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: 🚀 Desplegar en Servidor (Solo SSH)
+        uses: appleboy/ssh-action@v1.0.3 # Usamos la versión v1.0.3 que sabemos que funciona
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            # 1. Ir a la carpeta del proyecto
+            # 1. Crear carpeta si no existe
+            mkdir -p /home/${{ secrets.SERVER_USER }}/gymtracker-api
             cd /home/${{ secrets.SERVER_USER }}/gymtracker-api
 
-            # 2. Crear el archivo .env con la contraseña (esto es seguro porque usa Secrets)
-            echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" > .env
-            echo "NODE_ENV=production" >> .env
+            # 2. Login en el registro de GitHub desde el servidor
+            # Usamos el token de GitHub para que el servidor tenga permiso de bajar la imagen
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # 3. Apagar contenedores viejos (si existen)
-            docker-compose -f docker-compose.prod.yml down
+            # 3. Generar el docker-compose.prod.yml AL VUELO
+            # (Así nos ahorramos el SCP que estaba fallando y el git pull)
+            cat <<EOF > docker-compose.prod.yml
+            version: '3.8'
+            services:
+              api:
+                container_name: gymtracker-api
+                image: ghcr.io/${{ github.repository }}:latest
+                restart: always
+                ports:
+                  - "127.0.0.1:3005:3000"
+                environment:
+                  DATABASE_URL: "postgresql://postgres:${{ secrets.DB_PASSWORD }}@db:5432/gymtracker?schema=public"
+                  NODE_ENV: "production"
+                depends_on:
+                  - db
+                networks:
+                  - gym-net
+              db:
+                image: postgres:15-alpine
+                container_name: gymtracker-db-prod
+                restart: always
+                environment:
+                  POSTGRES_USER: postgres
+                  POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
+                  POSTGRES_DB: gymtracker
+                volumes:
+                  - gymtracker_pg_data:/var/lib/postgresql/data
+                networks:
+                  - gym-net
+            volumes:
+              gymtracker_pg_data:
+            networks:
+              gym-net:
+            EOF
 
-            # 4. Construir y levantar los nuevos
-            # --build asegura que se recompila el código nuevo
-            docker-compose -f docker-compose.prod.yml up -d --build
+            # 4. Actualizar contenedores
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # 5. Ejecutar migraciones (Opcional pero recomendado para que la BD esté al día)
-            # Esperamos 10 segundos a que la BD arranque antes de migrar
-            sleep 10
-            docker exec gymtracker-api npx prisma migrate deploy
+            # 5. Limpieza de imágenes viejas
+            docker image prune -f
