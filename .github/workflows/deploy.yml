@@ -1,0 +1,52 @@
+name: Deploy to Hetzner VPS
+
+on:
+  push:
+    branches:
+      - main # Se ejecuta cada vez que haces push a la rama principal
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Bajar el código (Checkout)
+        uses: actions/checkout@v4
+
+      - name: 🚚 Copiar archivos al Servidor (SCP)
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          # Copiamos todo EXCEPTO cosas pesadas o innecesarias
+          source: '.,!node_modules,!dist,!.git,!.github'
+          target: '/home/${{ secrets.SERVER_USER }}/gymtracker-api'
+
+      - name: 🚀 Desplegar en el Servidor (SSH)
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            # 1. Ir a la carpeta del proyecto
+            cd /home/${{ secrets.SERVER_USER }}/gymtracker-api
+
+            # 2. Crear el archivo .env con la contraseña (esto es seguro porque usa Secrets)
+            echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" > .env
+            echo "NODE_ENV=production" >> .env
+
+            # 3. Apagar contenedores viejos (si existen)
+            docker-compose -f docker-compose.prod.yml down
+
+            # 4. Construir y levantar los nuevos
+            # --build asegura que se recompila el código nuevo
+            docker-compose -f docker-compose.prod.yml up -d --build
+
+            # 5. Ejecutar migraciones (Opcional pero recomendado para que la BD esté al día)
+            # Esperamos 10 segundos a que la BD arranque antes de migrar
+            sleep 10
+            docker exec gymtracker-api npx prisma migrate deploy
