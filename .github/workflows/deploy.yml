@@ -1,11 +1,10 @@
-name: Deploy GymTracker (Docker Image Strategy)
+name: Deploy GymTracker (Professional)
 
 on:
   push:
     branches: ['main']
 
 env:
-  # Define el nombre de la imagen en el registro de GitHub
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -14,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write # Necesario para subir la imagen a GitHub Packages
+      packages: write
 
     steps:
       - name: 📥 Bajar código
@@ -27,79 +26,43 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🐳 Extraer metadatos (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest
-            type=sha
-
-      - name: 🔨 Construir y Subir Imagen (Build & Push)
+      - name: 🐳 Build y Push de la Imagen Docker
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/${{ github.repository }}:latest
 
-      - name: 🚀 Desplegar en Servidor (Solo SSH)
-        uses: appleboy/ssh-action@v1.0.3 # Usamos la versión v1.0.3 que sabemos que funciona
+      # --- AQUÍ ESTÁ EL CAMBIO PROFESIONAL ---
+      # Copiamos EL MISMO archivo que tienes en tu repo al servidor.
+      - name: 📂 Copiar docker-compose.prod.yml al servidor
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          source: 'docker-compose.prod.yml'
+          target: '/home/${{ secrets.SERVER_USER }}/gymtracker-api'
+
+      - name: 🚀 Desplegar en Servidor
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            # 1. Crear carpeta si no existe
-            mkdir -p /home/${{ secrets.SERVER_USER }}/gymtracker-api
             cd /home/${{ secrets.SERVER_USER }}/gymtracker-api
 
-            # 2. Login en el registro de GitHub desde el servidor
-            # Usamos el token de GitHub para que el servidor tenga permiso de bajar la imagen
+            # 1. Login en Docker (Servidor)
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # 3. Generar el docker-compose.prod.yml AL VUELO
-            # (Así nos ahorramos el SCP que estaba fallando y el git pull)
-            cat <<EOF > docker-compose.prod.yml
-            version: '3.8'
-            services:
-              api:
-                container_name: gymtracker-api
-                image: ghcr.io/${{ github.repository }}:latest
-                restart: always
-                env_file: ".env"
-                ports:
-                  - "127.0.0.1:3005:3000"
-                environment:
-                  DATABASE_URL: "postgresql://postgres:${{ secrets.DB_PASSWORD }}@db:5432/gymtracker?schema=public"
-                  NODE_ENV: "production"
-                depends_on:
-                  - db
-                networks:
-                  - gym-net
-              db:
-                image: postgres:15-alpine
-                container_name: gymtracker-db-prod
-                restart: always
-                environment:
-                  POSTGRES_USER: postgres
-                  POSTGRES_PASSWORD: ${{ secrets.DB_PASSWORD }}
-                  POSTGRES_DB: gymtracker
-                volumes:
-                  - gymtracker_pg_data:/var/lib/postgresql/data
-                networks:
-                  - gym-net
-            volumes:
-              gymtracker_pg_data:
-            networks:
-              gym-net:
-            EOF
-
-            # 4. Actualizar contenedores
+            # 2. Descargar la nueva imagen
             docker compose -f docker-compose.prod.yml pull
+
+            # 3. Recrear los contenedores con el archivo FÍSICO que acabamos de copiar
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # 5. Limpieza de imágenes viejas
+            # 4. Limpieza
             docker image prune -f
