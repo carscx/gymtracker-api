@@ -17,7 +17,14 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "seed": "ts-node prisma/seed.ts",
+    "db:up": "docker compose -f docker-compose.yml up -d db",
+    "db:down": "docker compose -f docker-compose.yml down",
+    "db:nuke": "docker compose -f docker-compose.yml down -v",
+    "prisma:setup": "npx prisma migrate dev && npx prisma db seed",
+    "prisma:reset": "npx prisma migrate reset --force",
+    "init:local": "npm run db:up && echo 'Esperando a la BD...' && sleep 3 && npm run prisma:setup"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
