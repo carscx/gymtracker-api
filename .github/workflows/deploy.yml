@@ -69,6 +69,7 @@ jobs:
                 container_name: gymtracker-api
                 image: ghcr.io/${{ github.repository }}:latest
                 restart: always
+                env_file: ".env"
                 ports:
                   - "127.0.0.1:3005:3000"
                 environment:
