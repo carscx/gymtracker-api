@@ -1,4 +1,4 @@
-name: Deploy GymTracker (Professional)
+name: Deploy GymTracker (Native SCP)
 
 on:
   push:
@@ -26,24 +26,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🐳 Build y Push de la Imagen Docker
+      - name: 🐳 Build y Push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ghcr.io/${{ github.repository }}:latest
 
-      # --- AQUÍ ESTÁ EL CAMBIO PROFESIONAL ---
-      # Copiamos EL MISMO archivo que tienes en tu repo al servidor.
-      - name: 📂 Copiar docker-compose.prod.yml al servidor
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          port: 22
-          source: 'docker-compose.prod.yml'
-          target: '/home/${{ secrets.SERVER_USER }}/gymtracker-api'
+      # --- CAMBIO IMPORTANTE: Usamos SCP Nativo ---
+      # Esto configura la llave SSH temporalmente y lanza el comando scp real
+      - name: 📂 Copiar archivo (SCP Nativo)
+        run: |
+          # 1. Configurar llave SSH en el Runner
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          # 2. Agregar el servidor a hosts conocidos (para evitar el prompt de yes/no)
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+          # 3. Crear carpeta remota por si acaso
+          ssh -i ~/.ssh/id_rsa ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} "mkdir -p /home/${{ secrets.SERVER_USER }}/gymtracker-api"
+
+          # 4. Copiar el archivo FÍSICO
+          scp -i ~/.ssh/id_rsa docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/home/${{ secrets.SERVER_USER }}/gymtracker-api/docker-compose.prod.yml
 
       - name: 🚀 Desplegar en Servidor
         uses: appleboy/ssh-action@v1.0.3
@@ -55,14 +61,8 @@ jobs:
           script: |
             cd /home/${{ secrets.SERVER_USER }}/gymtracker-api
 
-            # 1. Login en Docker (Servidor)
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
 
-            # 2. Descargar la nueva imagen
             docker compose -f docker-compose.prod.yml pull
-
-            # 3. Recrear los contenedores con el archivo FÍSICO que acabamos de copiar
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
-
-            # 4. Limpieza
             docker image prune -f
